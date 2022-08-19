@@ -1,16 +1,26 @@
 package com.sksamuel.scrimage.nio.internal;
 
-import java.net.*;
-import java.io.*;
-import java.util.*;
-import java.awt.*;
-import java.awt.image.*;
-
 import com.sksamuel.scrimage.DisposeMethod;
+import com.sksamuel.scrimage.ImmutableImage;
+import com.sksamuel.scrimage.nio.GifSequenceWriter;
+import java.awt.AlphaComposite;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Graphics2D;
+import java.awt.Rectangle;
+import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
+import java.io.BufferedInputStream;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Class GifDecoder - Decodes a GIF file into one or more frames.
- *
+ * <p>
  * Example:
  *
  * <pre>
@@ -25,13 +35,11 @@ import com.sksamuel.scrimage.DisposeMethod;
  *    }
  * }
  * </pre>
- * No copyright asserted on the source code of this class.  May be used for
- * any purpose, however, refer to the Unisys LZW patent for any additional
- * restrictions.  Please forward any corrections to questions at fmsware.com.
+ * No copyright asserted on the source code of this class.  May be used for any purpose, however, refer to the Unisys
+ * LZW patent for any additional restrictions.  Please forward any corrections to questions at fmsware.com.
  *
  * @author Kevin Weiner, FM Software; LZW decoder adapted from John Cristy's ImageMagick.
  * @version 1.03 November 2003
- *
  */
 public class GifSequenceReader {
 
@@ -97,7 +105,7 @@ public class GifSequenceReader {
    protected byte[] pixelStack;
    protected byte[] pixels;
 
-   protected ArrayList frames; // frames read from current file
+   protected List<GifFrame> frames; // frames read from current file
    protected int frameCount;
 
    static class GifFrame {
@@ -106,6 +114,7 @@ public class GifSequenceReader {
          delay = del;
          this.disposeMethod = disposeMethod;
       }
+
       public BufferedImage image;
       public int delay;
       public int disposeMethod;
@@ -121,7 +130,7 @@ public class GifSequenceReader {
       //
       delay = -1;
       if ((n >= 0) && (n < frameCount)) {
-         delay = ((GifFrame) frames.get(n)).delay;
+         delay = frames.get(n).delay;
       }
       return delay;
    }
@@ -136,7 +145,7 @@ public class GifSequenceReader {
       //
       dispose = 0;
       if ((n >= 0) && (n < frameCount)) {
-         dispose = ((GifFrame) frames.get(n)).disposeMethod;
+         dispose = frames.get(n).disposeMethod;
       }
       return DisposeMethod.getDisposeMethodFromId(dispose);
    }
@@ -169,8 +178,7 @@ public class GifSequenceReader {
    }
 
    /**
-    * Creates new frame image from current data (and previous
-    * frames as specified by their disposition codes).
+    * Creates new frame image from current data (and previous frames as specified by their disposition codes).
     */
    protected void setPixels() {
       // expose destination image's pixels as int array
@@ -199,7 +207,7 @@ public class GifSequenceReader {
                Graphics2D g = image.createGraphics();
                Color c = null;
                if (transparency) {
-                  c = new Color(0, 0, 0, 0); 	// assume background is transparent
+                  c = new Color(0, 0, 0, 0);   // assume background is transparent
                } else {
                   c = new Color(lastBgColor); // use given background color
                }
@@ -221,14 +229,14 @@ public class GifSequenceReader {
             if (iline >= ih) {
                pass++;
                switch (pass) {
-                  case 2 :
+                  case 2:
                      iline = 4;
                      break;
-                  case 3 :
+                  case 3:
                      iline = 2;
                      inc = 4;
                      break;
-                  case 4 :
+                  case 4:
                      iline = 1;
                      inc = 2;
                }
@@ -266,7 +274,7 @@ public class GifSequenceReader {
    public BufferedImage getFrame(int n) {
       BufferedImage im = null;
       if ((n >= 0) && (n < frameCount)) {
-         im = ((GifFrame) frames.get(n)).image;
+         im = frames.get(n).image;
       }
       return im;
    }
@@ -278,6 +286,22 @@ public class GifSequenceReader {
     */
    public Dimension getFrameSize() {
       return new Dimension(width, height);
+   }
+
+   /**
+    * Gets gif image bytes.
+    *
+    * @return GIF InputStream ll bytes
+    * @throws IOException
+    */
+   public byte[] bytes() throws IOException {
+      return new GifSequenceWriter()
+         .withFrameDelay(delay)
+         .withInfiniteLoop(loopCount == 0)
+         .bytes(frames.stream()
+            .map(frame -> frame.image)
+            .map(ImmutableImage::fromAwt)
+            .toArray(ImmutableImage[]::new));
    }
 
    /**
@@ -316,8 +340,9 @@ public class GifSequenceReader {
    public int read(InputStream is) {
       init();
       if (is != null) {
-         if (!(is instanceof BufferedInputStream))
+         if (!(is instanceof BufferedInputStream)) {
             is = new BufferedInputStream(is);
+         }
          in = (BufferedInputStream) is;
          readHeader();
          if (!err()) {
@@ -337,8 +362,7 @@ public class GifSequenceReader {
    }
 
    /**
-    * Reads GIF file from specified file/URL source
-    * (URL assumed if name contains ":/" or "file:")
+    * Reads GIF file from specified file/URL source (URL assumed if name contains ":/" or "file:")
     *
     * @param name String containing source
     * @return read status code (0 = no errors)
@@ -363,8 +387,7 @@ public class GifSequenceReader {
    }
 
    /**
-    * Decodes LZW image data into pixel array.
-    * Adapted from John Cristy's ImageMagick.
+    * Decodes LZW image data into pixel array. Adapted from John Cristy's ImageMagick.
     */
    protected void decodeImageData() {
       int NullCode = -1;
@@ -390,9 +413,15 @@ public class GifSequenceReader {
       if ((pixels == null) || (pixels.length < npix)) {
          pixels = new byte[npix]; // allocate new pixel array
       }
-      if (prefix == null) prefix = new short[MaxStackSize];
-      if (suffix == null) suffix = new byte[MaxStackSize];
-      if (pixelStack == null) pixelStack = new byte[MaxStackSize + 1];
+      if (prefix == null) {
+         prefix = new short[MaxStackSize];
+      }
+      if (suffix == null) {
+         suffix = new byte[MaxStackSize];
+      }
+      if (pixelStack == null) {
+         pixelStack = new byte[MaxStackSize + 1];
+      }
 
       //  Initialize GIF data stream decoder.
 
@@ -412,15 +441,16 @@ public class GifSequenceReader {
 
       datum = bits = count = first = top = pi = bi = 0;
 
-      for (i = 0; i < npix;) {
+      for (i = 0; i < npix; ) {
          if (top == 0) {
             if (bits < code_size) {
                //  Load bytes until there are enough bits for a code.
                if (count == 0) {
                   // Read a new data block.
                   count = readBlock();
-                  if (count <= 0)
+                  if (count <= 0) {
                      break;
+                  }
                   bi = 0;
                }
                datum += (((int) block[bi]) & 0xff) << bits;
@@ -438,8 +468,9 @@ public class GifSequenceReader {
 
             //  Interpret the code
 
-            if ((code > available) || (code == end_of_information))
+            if ((code > available) || (code == end_of_information)) {
                break;
+            }
             if (code == clear) {
                //  Reset decoder.
                code_size = data_size + 1;
@@ -509,7 +540,7 @@ public class GifSequenceReader {
    protected void init() {
       status = STATUS_OK;
       frameCount = 0;
-      frames = new ArrayList();
+      frames = new ArrayList<>();
       gct = null;
       lct = null;
    }
@@ -540,8 +571,9 @@ public class GifSequenceReader {
             int count = 0;
             while (n < blockSize) {
                count = in.read(block, n, blockSize - n);
-               if (count == -1)
+               if (count == -1) {
                   break;
+               }
                n += count;
             }
          } catch (IOException e) {
@@ -595,18 +627,18 @@ public class GifSequenceReader {
          int code = read();
          switch (code) {
 
-            case 0x2C : // image separator
+            case 0x2C: // image separator
                readImage();
                break;
 
-            case 0x21 : // extension
+            case 0x21: // extension
                code = read();
                switch (code) {
-                  case 0xf9 : // graphics control extension
+                  case 0xf9: // graphics control extension
                      readGraphicControlExt();
                      break;
 
-                  case 0xff : // application extension
+                  case 0xff: // application extension
                      readBlock();
                      String app = "";
                      for (int i = 0; i < 11; i++) {
@@ -614,24 +646,24 @@ public class GifSequenceReader {
                      }
                      if (app.equals("NETSCAPE2.0")) {
                         readNetscapeExt();
-                     }
-                     else
+                     } else {
                         skip(); // don't care
+                     }
                      break;
 
-                  default : // uninteresting extension
+                  default: // uninteresting extension
                      skip();
                }
                break;
 
-            case 0x3b : // terminator
+            case 0x3b: // terminator
                done = true;
                break;
 
-            case 0x00 : // bad byte, but keep going and see what happens
+            case 0x00: // bad byte, but keep going and see what happens
                break;
 
-            default :
+            default:
                status = STATUS_FORMAT_ERROR;
          }
       }
@@ -694,8 +726,9 @@ public class GifSequenceReader {
          act = lct; // make local table active
       } else {
          act = gct; // make global table active
-         if (bgIndex == transIndex)
+         if (bgIndex == transIndex) {
             bgColor = 0;
+         }
       }
       int save = 0;
       if (transparency) {
@@ -707,12 +740,16 @@ public class GifSequenceReader {
          status = STATUS_FORMAT_ERROR; // no color table defined
       }
 
-      if (err()) return;
+      if (err()) {
+         return;
+      }
 
       decodeImageData(); // decode pixel data
       skip();
 
-      if (err()) return;
+      if (err()) {
+         return;
+      }
 
       frameCount++;
 
@@ -779,7 +816,7 @@ public class GifSequenceReader {
     */
    protected void resetFrame() {
       if (dispose == 1) {
-         this.frameIndexWithLastDoNotDispose = frameCount-1;
+         this.frameIndexWithLastDoNotDispose = frameCount - 1;
       }
       lastRect = new Rectangle(ix, iy, iw, ih);
       lastImage = image;
@@ -791,8 +828,7 @@ public class GifSequenceReader {
    }
 
    /**
-    * Skips variable length blocks up to and including
-    * next zero length block.
+    * Skips variable length blocks up to and including next zero length block.
     */
    protected void skip() {
       do {
